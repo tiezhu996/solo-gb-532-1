@@ -94,11 +94,13 @@ func (r *TransectPlanRepository) Copy(source model.TransectPlan, actorID uint) (
 	copy.ID = 0
 	copy.Name = source.Name + " / 复制版本"
 	copy.PlanState = "draft"
-	// 复制版本是新的手工草稿，不继承补测来源关联（source_gap_id 唯一）。
+	// 复制版本是新的手工草稿，不继承任何补测来源信息（source_gap_id 唯一）。
 	copy.PlanSource = "manual"
 	copy.SourceGapID = nil
 	copy.SourcePlanID = nil
 	copy.SourceInputHash = ""
+	copy.SourceGapVersion = nil
+	copy.SourceGapState = ""
 	copy.SourceGap = nil
 	copy.SourcePlan = nil
 	copy.Version = source.Version + 1
