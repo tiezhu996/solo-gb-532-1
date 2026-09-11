@@ -38,6 +38,10 @@ func (s *TransectPlanService) Get(id uint) (model.TransectPlan, error) {
 }
 
 func (s *TransectPlanService) Create(request dto.CreateTransectPlanRequest, actor Actor) (model.TransectPlan, error) {
+	return s.create(request, actor, constants.PlanSourceManual)
+}
+
+func (s *TransectPlanService) create(request dto.CreateTransectPlanRequest, actor Actor, source string) (model.TransectPlan, error) {
 	area, err := s.areas.Get(request.SurveyAreaID)
 	if err != nil {
 		return model.TransectPlan{}, mapDatabaseError(err, "测区")
@@ -48,11 +52,11 @@ func (s *TransectPlanService) Create(request dto.CreateTransectPlanRequest, acto
 	if _, err := geometry.ParseLines(request.LineGeoJSON); err != nil {
 		return model.TransectPlan{}, api.Unprocessable("GEOJSON_INVALID", "测线 GeoJSON 无效", err)
 	}
-	item := model.TransectPlan{SurveyAreaID: request.SurveyAreaID, Name: request.Name, LineGeoJSON: datatypes.JSON(request.LineGeoJSON), PlannedHeading: request.PlannedHeading, PlannedSwathM: request.PlannedSwathM, LineSpacingM: request.LineSpacingM, PlanState: constants.PlanDraft, Version: 1, CreatedBy: actor.UserID}
+	item := model.TransectPlan{SurveyAreaID: request.SurveyAreaID, Name: request.Name, LineGeoJSON: datatypes.JSON(request.LineGeoJSON), PlannedHeading: request.PlannedHeading, PlannedSwathM: request.PlannedSwathM, LineSpacingM: request.LineSpacingM, PlanState: constants.PlanDraft, PlanSource: source, Version: 1, CreatedBy: actor.UserID}
 	if err := s.repository.Create(&item); err != nil {
 		return item, err
 	}
-	if err := s.audit.Record(actor, "plan.create", "transect_plan", item.ID, nil, item, map[string]any{"source": "manual"}); err != nil {
+	if err := s.audit.Record(actor, "plan.create", "transect_plan", item.ID, nil, item, map[string]any{"source": source}); err != nil {
 		return item, err
 	}
 	return s.Get(item.ID)
@@ -89,7 +93,7 @@ func (s *TransectPlanService) Generate(request dto.GenerateLinesRequest, actor A
 	if err != nil {
 		return model.TransectPlan{}, fmt.Errorf("encode generated transects: %w", err)
 	}
-	return s.Create(dto.CreateTransectPlanRequest{SurveyAreaID: request.SurveyAreaID, Name: request.Name, LineGeoJSON: encoded, PlannedHeading: request.Heading, PlannedSwathM: request.PlannedSwathM, LineSpacingM: request.LineSpacingM}, actor)
+	return s.create(dto.CreateTransectPlanRequest{SurveyAreaID: request.SurveyAreaID, Name: request.Name, LineGeoJSON: encoded, PlannedHeading: request.Heading, PlannedSwathM: request.PlannedSwathM, LineSpacingM: request.LineSpacingM}, actor, constants.PlanSourceGenerated)
 }
 
 func (s *TransectPlanService) Update(id uint, request dto.UpdateTransectPlanRequest, actor Actor) (model.TransectPlan, error) {

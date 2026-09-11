@@ -69,3 +69,20 @@ func (h *CoverageGapHandler) Transition(c *gin.Context) {
 	}
 	api.Success(c, http.StatusOK, item)
 }
+func (h *CoverageGapHandler) ResurveyPlan(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	var request dto.GenerateResurveyPlanRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		api.BindError(c, err)
+		return
+	}
+	item, err := h.service.GenerateResurveyPlan(id, request, actorFrom(c))
+	if err != nil {
+		writeServiceError(c, err, "补测规划")
+		return
+	}
+	api.Success(c, http.StatusCreated, item)
+}

@@ -41,7 +41,7 @@ func main() {
 	areaService := service.NewSurveyAreaService(areaRepository, auditService)
 	planService := service.NewTransectPlanService(planRepository, areaRepository, auditService)
 	runService := service.NewSonarRunService(runRepository, planRepository, auditService)
-	coverageService := service.NewCoverageGapService(coverageRepository, areaRepository, runRepository, auditService)
+	coverageService := service.NewCoverageGapService(coverageRepository, areaRepository, runRepository, planRepository, auditService)
 
 	handlers := router.Handlers{
 		Auth: handler.NewAuthHandler(authService, auditService), Area: handler.NewSurveyAreaHandler(areaService),

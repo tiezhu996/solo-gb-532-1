@@ -130,6 +130,17 @@ func TrackLength(lines []orb.LineString) float64 {
 	return total
 }
 
+// LineHeading returns the compass heading in degrees (clockwise from north)
+// of the overall line direction, normalized to [0, 360).
+func LineHeading(line orb.LineString) float64 {
+	if len(line) < 2 {
+		return 0
+	}
+	start, end := line[0], line[len(line)-1]
+	degrees := math.Atan2(end[0]-start[0], end[1]-start[1]) * 180 / math.Pi
+	return math.Mod(degrees+360, 360)
+}
+
 func CalculateCoverage(boundary orb.Polygon, tracks []Track, resolutionM float64) (CoverageResult, error) {
 	if resolutionM <= 0 || !finite(resolutionM) {
 		return CoverageResult{}, fmt.Errorf("%w: resolution must be positive", ErrInvalidGeometry)

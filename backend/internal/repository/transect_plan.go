@@ -27,7 +27,7 @@ func (r *TransectPlanRepository) List(query dto.TransectPlanQuery) ([]model.Tran
 		return nil, 0, fmt.Errorf("count transect plans: %w", err)
 	}
 	var items []model.TransectPlan
-	if err := db.Preload("SurveyArea").Order("updated_at DESC, id DESC").Offset((query.Page - 1) * query.PageSize).Limit(query.PageSize).Find(&items).Error; err != nil {
+	if err := db.Preload("SurveyArea").Preload("SourceGap").Preload("SourcePlan").Order("updated_at DESC, id DESC").Offset((query.Page - 1) * query.PageSize).Limit(query.PageSize).Find(&items).Error; err != nil {
 		return nil, 0, fmt.Errorf("list transect plans: %w", err)
 	}
 	return items, total, nil
@@ -35,8 +35,16 @@ func (r *TransectPlanRepository) List(query dto.TransectPlanQuery) ([]model.Tran
 
 func (r *TransectPlanRepository) Get(id uint) (model.TransectPlan, error) {
 	var item model.TransectPlan
-	if err := r.db.Preload("SurveyArea").First(&item, id).Error; err != nil {
+	if err := r.db.Preload("SurveyArea").Preload("SourceGap").Preload("SourcePlan").First(&item, id).Error; err != nil {
 		return item, fmt.Errorf("get transect plan: %w", err)
+	}
+	return item, nil
+}
+
+func (r *TransectPlanRepository) BySourceGap(gapID uint) (model.TransectPlan, error) {
+	var item model.TransectPlan
+	if err := r.db.Where("source_gap_id = ?", gapID).First(&item).Error; err != nil {
+		return item, fmt.Errorf("find resurvey plan by gap: %w", err)
 	}
 	return item, nil
 }
@@ -76,6 +84,13 @@ func (r *TransectPlanRepository) Copy(source model.TransectPlan, actorID uint) (
 	copy.ID = 0
 	copy.Name = source.Name + " / 复制版本"
 	copy.PlanState = "draft"
+	// 复制版本是新的手工草稿，不继承补测来源关联（source_gap_id 唯一）。
+	copy.PlanSource = "manual"
+	copy.SourceGapID = nil
+	copy.SourcePlanID = nil
+	copy.SourceInputHash = ""
+	copy.SourceGap = nil
+	copy.SourcePlan = nil
 	copy.Version = source.Version + 1
 	copy.CreatedBy = actorID
 	copy.CreatedAt = source.CreatedAt.Add(0)

@@ -14,6 +14,10 @@ const (
 	PlanDraft  = "draft"
 	PlanLocked = "locked"
 
+	PlanSourceManual    = "manual"
+	PlanSourceGenerated = "generated"
+	PlanSourceResurvey  = "resurvey"
+
 	NavGood     = "good"
 	NavDegraded = "degraded"
 	NavInvalid  = "invalid"

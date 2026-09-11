@@ -28,6 +28,13 @@ type GenerateLinesRequest struct {
 	PlannedSwathM float64 `json:"planned_swath_m" binding:"required,gt=0,lte=2000"`
 }
 
+type GenerateResurveyPlanRequest struct {
+	SurveyAreaID  uint    `json:"survey_area_id" binding:"required,gt=0"`
+	Name          string  `json:"name" binding:"omitempty,min=3,max=160"`
+	PlannedSwathM float64 `json:"planned_swath_m" binding:"omitempty,gt=0,lte=2000"`
+	LineSpacingM  float64 `json:"line_spacing_m" binding:"omitempty,gt=0,lte=2000"`
+}
+
 type PlanTransitionRequest struct {
 	TargetState     string `json:"target_state" binding:"required,oneof=locked"`
 	ExpectedVersion uint   `json:"expected_version" binding:"required,gt=0"`

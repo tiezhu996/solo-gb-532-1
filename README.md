@@ -12,6 +12,7 @@ docker compose up -d --build
 - 测线：从测区生成平行测线，锁定执行版本，复制形成后续草稿。
 - 航迹：导入 GeoJSON，检查采样点、长度、航速与导航质量，按状态机处理。
 - 覆盖：以固定网格估算覆盖、重复覆盖和漏测，冻结输入哈希并生成补测线建议。
+- 补测：复核员把已复核且有建议线的快照一键转为只含补测线的草稿规划，保留原规划、快照与输入哈希关联，每个快照仅生成一次。
 - 审计：记录四类实体写操作的前后快照、操作者、角色、request ID 和算法元数据。
 
 ## 角色与账号
@@ -23,7 +24,7 @@ docker compose up -d --build
 | `admin` | `admin` | 测区、规划、航迹和覆盖计算管理 |
 | `planner` | `survey_planner` | 测区与测线规划 |
 | `processor` | `data_processor` | 航迹导入、处理和覆盖计算 |
-| `reviewer` | `reviewer` | 覆盖缺口人工复核与审计读取 |
+| `reviewer` | `reviewer` | 覆盖缺口人工复核、补测方案生成与审计读取 |
 | `auditor` | `auditor` | 全局只读与审计读取 |
 
 审计员在数据库角色、JWT claims、Gin RBAC、React 路由和按钮层均为只读。只有 `reviewer` 可以推进缺口复核状态。
@@ -91,6 +92,7 @@ database/init.sql        PostGIS 扩展初始化
 | GET | `/coverage-gaps`、`/coverage-gaps/:id` | 缺口快照列表与详情 |
 | POST | `/coverage-gaps/detect` | 覆盖计算，要求 `Idempotency-Key` |
 | POST | `/coverage-gaps/:id/transition` | reviewer 人工复核 |
+| POST | `/coverage-gaps/:id/resurvey-plan` | 已复核快照转为补测草稿规划 |
 | GET | `/audits` | 审计筛选 |
 
 错误响应统一包含业务 `code`、`message`、可选 `details` 和 `request_id`。无效 GeoJSON/坐标系返回 422，非法状态或版本冲突返回 409，认证与权限分别返回 401/403。
@@ -106,6 +108,11 @@ database/init.sql        PostGIS 扩展初始化
 
 - 后端：`internal/constants/gap_severity.go`；`model/coverage_gap.go`；`dto/coverage_gap.go`；`service/coverage_gap.go`；`handler/coverage_gap.go`；`constants/state_test.go`。
 - 前端：`types/enums/gap-severity.ts`；`types/coverage-gap.ts`；`stores/coverage-gap-store.ts`；`pages/CoveragePage.tsx`；`utils/state.test.ts`。
+
+`PlanSource = manual | generated | resurvey`
+
+- 后端：`internal/constants/roles.go`；`model/transect_plan.go`；`service/transect_plan.go`；`service/coverage_gap.go`；`repository/transect_plan.go`；`service/coverage_gap_test.go`。
+- 前端：`types/enums/plan-source.ts`；`types/transect-plan.ts`；`pages/PlansPage.tsx`；`utils/state.test.ts`。
 
 ## 坐标与算法边界
 
@@ -182,6 +189,10 @@ docker compose down -v --remove-orphans
 - `VERSION_CONFLICT`：数据已被其他人员更新，刷新列表后按新版本重试。
 - `RUN_TRANSITION_INVALID`：必须依次完成质量检查、处理和已处理状态。
 - `RUN_NOT_PROCESSED`：覆盖计算只能选择已处理且属于同一测区的运行。
+- `GAP_NOT_REVIEWED`：只有已复核（或接受补测）的快照才能生成补测规划。
+- `RESURVEY_AREA_MISMATCH`：请求测区与快照所属测区不一致，刷新后按快照测区重试。
+- `RECOMMENDED_LINES_EMPTY`：快照没有可用建议补测线，不能生成补测规划。
+- `RESURVEY_PLAN_EXISTS`：该快照已生成过补测规划，直接在测线页查看来源并锁定。
 - npm 默认镜像无法下载或审计：显式使用 `--registry=https://registry.npmjs.org --replace-registry-host=always`。
 
 ## License

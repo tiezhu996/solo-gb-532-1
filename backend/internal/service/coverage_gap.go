@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -26,11 +27,12 @@ type CoverageGapService struct {
 	repository *repository.CoverageGapRepository
 	areas      *repository.SurveyAreaRepository
 	runs       *repository.SonarRunRepository
+	plans      *repository.TransectPlanRepository
 	audit      *AuditService
 }
 
-func NewCoverageGapService(repository *repository.CoverageGapRepository, areas *repository.SurveyAreaRepository, runs *repository.SonarRunRepository, audit *AuditService) *CoverageGapService {
-	return &CoverageGapService{repository: repository, areas: areas, runs: runs, audit: audit}
+func NewCoverageGapService(repository *repository.CoverageGapRepository, areas *repository.SurveyAreaRepository, runs *repository.SonarRunRepository, plans *repository.TransectPlanRepository, audit *AuditService) *CoverageGapService {
+	return &CoverageGapService{repository: repository, areas: areas, runs: runs, plans: plans, audit: audit}
 }
 
 func (s *CoverageGapService) List(query dto.CoverageGapQuery) ([]model.CoverageGap, int64, error) {
@@ -108,6 +110,80 @@ func (s *CoverageGapService) Detect(request dto.DetectCoverageRequest, idempoten
 		return CoverageResultView{}, err
 	}
 	return CoverageResultView{Gap: item, Evidence: evidence}, nil
+}
+
+// GenerateResurveyPlan 把已复核且有建议线的覆盖快照转为只含补测线的草稿测线规划，
+// 保留原规划、快照与输入哈希的关联；每个快照最多生成一次。
+func (s *CoverageGapService) GenerateResurveyPlan(gapID uint, request dto.GenerateResurveyPlanRequest, actor Actor) (model.TransectPlan, error) {
+	gap, err := s.Get(gapID)
+	if err != nil {
+		return model.TransectPlan{}, err
+	}
+	if request.SurveyAreaID != gap.SurveyAreaID {
+		return model.TransectPlan{}, api.Unprocessable("RESURVEY_AREA_MISMATCH", "所选测区与缺口快照所属测区不一致", nil)
+	}
+	if state := constants.GapState(gap.GapState); state != constants.GapReviewed && state != constants.GapAccepted {
+		return model.TransectPlan{}, api.Conflict("GAP_NOT_REVIEWED", "覆盖快照尚未复核，不能生成补测规划", nil)
+	}
+	lines, err := geometry.ParseLines(gap.RecommendedLineGeoJSON)
+	if err != nil {
+		return model.TransectPlan{}, api.Unprocessable("GEOJSON_INVALID", "快照建议补测线无法解析", err)
+	}
+	if geometry.TrackLength(lines) <= 0 {
+		return model.TransectPlan{}, api.Unprocessable("RECOMMENDED_LINES_EMPTY", "快照没有可用的建议补测线", nil)
+	}
+	if _, err := s.plans.BySourceGap(gapID); err == nil {
+		return model.TransectPlan{}, api.Conflict("RESURVEY_PLAN_EXISTS", "该快照已生成补测规划，请勿重复提交", nil)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.TransectPlan{}, err
+	}
+	area, err := s.areas.Get(gap.SurveyAreaID)
+	if err != nil {
+		return model.TransectPlan{}, mapDatabaseError(err, "测区")
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = fmt.Sprintf("缺口 #%d 补测方案", gap.ID)
+	}
+	swath := request.PlannedSwathM
+	if swath == 0 {
+		swath = area.DefaultSwathM
+	}
+	spacing := request.LineSpacingM
+	if spacing == 0 {
+		spacing = area.DefaultSwathM
+	}
+	plan := model.TransectPlan{SurveyAreaID: gap.SurveyAreaID, Name: name, LineGeoJSON: gap.RecommendedLineGeoJSON, PlannedHeading: geometry.LineHeading(lines[0]), PlannedSwathM: swath, LineSpacingM: spacing, PlanState: constants.PlanDraft, PlanSource: constants.PlanSourceResurvey, SourceGapID: &gap.ID, SourcePlanID: s.sourcePlanID(gap), SourceInputHash: gap.InputHash, Version: 1, CreatedBy: actor.UserID}
+	if err := s.plans.Create(&plan); err != nil {
+		return plan, mapDatabaseError(err, "补测规划")
+	}
+	if err := s.audit.Record(actor, "coverage.resurvey_plan", "transect_plan", plan.ID, nil, plan, map[string]any{"source_gap_id": gap.ID, "gap_version": gap.Version, "input_hash": gap.InputHash, "source_plan_id": plan.SourcePlanID, "algorithm_version": gap.AlgorithmVersion}); err != nil {
+		return plan, err
+	}
+	created, err := s.plans.Get(plan.ID)
+	if err != nil {
+		return created, mapDatabaseError(err, "补测规划")
+	}
+	return created, nil
+}
+
+// sourcePlanID 取快照来源运行所属的原测线规划，作为补测规划的原规划关联。
+func (s *CoverageGapService) sourcePlanID(gap model.CoverageGap) *uint {
+	var runIDs []uint
+	if err := json.Unmarshal(gap.SourceRunIDs, &runIDs); err != nil || len(runIDs) == 0 {
+		return nil
+	}
+	runs, err := s.runs.ByIDs(uniqueIDs(runIDs))
+	if err != nil {
+		return nil
+	}
+	for _, run := range runs {
+		if run.TransectPlanID > 0 {
+			id := run.TransectPlanID
+			return &id
+		}
+	}
+	return nil
 }
 
 func (s *CoverageGapService) Transition(id uint, request dto.GapTransitionRequest, actor Actor) (model.CoverageGap, error) {

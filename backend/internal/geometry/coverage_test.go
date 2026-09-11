@@ -59,3 +59,23 @@ func TestStableInputHashIgnoresRunOrder(t *testing.T) {
 		t.Fatal("algorithm version must affect input hash")
 	}
 }
+
+func TestLineHeadingCompassDirection(t *testing.T) {
+	cases := []struct {
+		line orb.LineString
+		want float64
+	}{
+		{orb.LineString{{0, 0}, {100, 0}}, 90},
+		{orb.LineString{{0, 0}, {0, 100}}, 0},
+		{orb.LineString{{100, 0}, {0, 0}}, 270},
+		{orb.LineString{{0, 100}, {0, 0}}, 180},
+	}
+	for _, testCase := range cases {
+		if got := LineHeading(testCase.line); math.Abs(got-testCase.want) > 0.0001 {
+			t.Errorf("heading of %v = %.2f, want %.2f", testCase.line, got, testCase.want)
+		}
+	}
+	if got := LineHeading(orb.LineString{{1, 1}}); got != 0 {
+		t.Errorf("degenerate line heading = %.2f, want 0", got)
+	}
+}
