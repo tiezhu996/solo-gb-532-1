@@ -1,0 +1,15 @@
+.env
+.DS_Store
+*.log
+*.db
+*.sqlite*
+node_modules/
+dist/
+coverage/
+.idea/
+.vscode/
+frontend/.vite/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+output/*.tmp
