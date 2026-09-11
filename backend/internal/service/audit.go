@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"gorm.io/gorm"
+
 	"sonar-survey-coverage-planner/backend/internal/model"
 	"sonar-survey-coverage-planner/backend/internal/repository"
 )
@@ -20,6 +22,11 @@ type AuditService struct{ repository *repository.SupportRepository }
 
 func NewAuditService(repository *repository.SupportRepository) *AuditService {
 	return &AuditService{repository: repository}
+}
+
+// WithTx 返回在同一事务中写入审计事件的服务，配合业务写入一起提交或回滚。
+func (s *AuditService) WithTx(tx *gorm.DB) *AuditService {
+	return &AuditService{repository: s.repository.WithTx(tx)}
 }
 
 func (s *AuditService) Record(actor Actor, action, entityType string, entityID uint, before, after, metadata any) error {

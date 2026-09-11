@@ -153,12 +153,15 @@ func (s *CoverageGapService) GenerateResurveyPlan(gapID uint, request dto.Genera
 	if spacing == 0 {
 		spacing = area.DefaultSwathM
 	}
-	plan := model.TransectPlan{SurveyAreaID: gap.SurveyAreaID, Name: name, LineGeoJSON: gap.RecommendedLineGeoJSON, PlannedHeading: geometry.LineHeading(lines[0]), PlannedSwathM: swath, LineSpacingM: spacing, PlanState: constants.PlanDraft, PlanSource: constants.PlanSourceResurvey, SourceGapID: &gap.ID, SourcePlanID: s.sourcePlanID(gap), SourceInputHash: gap.InputHash, Version: 1, CreatedBy: actor.UserID}
-	if err := s.plans.Create(&plan); err != nil {
-		return plan, mapDatabaseError(err, "补测规划")
-	}
-	if err := s.audit.Record(actor, "coverage.resurvey_plan", "transect_plan", plan.ID, nil, plan, map[string]any{"source_gap_id": gap.ID, "gap_version": gap.Version, "input_hash": gap.InputHash, "source_plan_id": plan.SourcePlanID, "algorithm_version": gap.AlgorithmVersion}); err != nil {
-		return plan, err
+	plan := model.TransectPlan{SurveyAreaID: gap.SurveyAreaID, Name: name, LineGeoJSON: gap.RecommendedLineGeoJSON, PlannedHeading: geometry.LineHeading(lines[0]), PlannedSwathM: swath, LineSpacingM: spacing, PlanState: constants.PlanDraft, PlanSource: constants.PlanSourceResurvey, SourceGapID: &gap.ID, SourcePlanID: s.sourcePlanID(gap), SourceInputHash: gap.InputHash, SourceGapVersion: &gap.Version, SourceGapState: gap.GapState, Version: 1, CreatedBy: actor.UserID}
+	// 规划与审计同事务：任一失败整体回滚，不留下半成品规划。
+	if err := s.plans.Transaction(func(tx *gorm.DB) error {
+		if err := s.plans.WithTx(tx).Create(&plan); err != nil {
+			return mapDatabaseError(err, "补测规划")
+		}
+		return s.audit.WithTx(tx).Record(actor, "coverage.resurvey_plan", "transect_plan", plan.ID, nil, plan, map[string]any{"source_gap_id": gap.ID, "gap_version": gap.Version, "gap_state": gap.GapState, "input_hash": gap.InputHash, "source_plan_id": plan.SourcePlanID, "algorithm_version": gap.AlgorithmVersion})
+	}); err != nil {
+		return model.TransectPlan{}, err
 	}
 	created, err := s.plans.Get(plan.ID)
 	if err != nil {

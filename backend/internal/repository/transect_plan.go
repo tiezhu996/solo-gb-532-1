@@ -14,6 +14,16 @@ func NewTransectPlanRepository(db *gorm.DB) *TransectPlanRepository {
 	return &TransectPlanRepository{db: db}
 }
 
+// Transaction 在同一数据库事务中执行多表写入，保证要么一起提交要么一起回滚。
+func (r *TransectPlanRepository) Transaction(fn func(tx *gorm.DB) error) error {
+	return r.db.Transaction(fn)
+}
+
+// WithTx 返回绑定到给定事务的仓储。
+func (r *TransectPlanRepository) WithTx(tx *gorm.DB) *TransectPlanRepository {
+	return &TransectPlanRepository{db: tx}
+}
+
 func (r *TransectPlanRepository) List(query dto.TransectPlanQuery) ([]model.TransectPlan, int64, error) {
 	db := r.db.Model(&model.TransectPlan{})
 	if query.SurveyAreaID > 0 {

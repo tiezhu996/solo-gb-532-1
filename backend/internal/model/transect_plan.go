@@ -19,13 +19,16 @@ type TransectPlan struct {
 	SourceGapID     *uint          `json:"source_gap_id" gorm:"uniqueIndex:idx_plan_source_gap"`
 	SourcePlanID    *uint          `json:"source_plan_id" gorm:"index"`
 	SourceInputHash string         `json:"source_input_hash" gorm:"size:64"`
-	Version         uint           `json:"version" gorm:"not null;default:1"`
-	CreatedBy       uint           `json:"created_by" gorm:"not null"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	CreatedAt       time.Time      `json:"created_at"`
-	SurveyArea      *SurveyArea    `json:"survey_area,omitempty" gorm:"foreignKey:SurveyAreaID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
-	SourceGap       *CoverageGap   `json:"source_gap,omitempty" gorm:"foreignKey:SourceGapID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL"`
-	SourcePlan      *TransectPlan  `json:"source_plan,omitempty" gorm:"foreignKey:SourcePlanID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL"`
+	// 生成时冻结的快照版本与状态，后续缺口复核不再改写。
+	SourceGapVersion *uint         `json:"source_gap_version"`
+	SourceGapState   string        `json:"source_gap_state" gorm:"size:24"`
+	Version          uint          `json:"version" gorm:"not null;default:1"`
+	CreatedBy        uint          `json:"created_by" gorm:"not null"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	CreatedAt        time.Time     `json:"created_at"`
+	SurveyArea       *SurveyArea   `json:"survey_area,omitempty" gorm:"foreignKey:SurveyAreaID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	SourceGap        *CoverageGap  `json:"source_gap,omitempty" gorm:"foreignKey:SourceGapID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL"`
+	SourcePlan       *TransectPlan `json:"source_plan,omitempty" gorm:"foreignKey:SourcePlanID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL"`
 }
 
 func (TransectPlan) TableName() string { return "transect_plans" }

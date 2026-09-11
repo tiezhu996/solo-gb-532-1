@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 
 	"sonar-survey-coverage-planner/backend/internal/config"
 	"sonar-survey-coverage-planner/backend/internal/constants"
@@ -15,7 +16,7 @@ import (
 	"sonar-survey-coverage-planner/backend/pkg/api"
 )
 
-func newResurveyFixture(t *testing.T) (*CoverageGapService, *TransectPlanService) {
+func newResurveyFixture(t *testing.T) (*CoverageGapService, *TransectPlanService, *gorm.DB) {
 	t.Helper()
 	configuration := config.Config{DBDriver: "sqlite", DBDSN: "file:" + t.Name() + "?mode=memory&cache=shared", JWTSecret: "test-secret-with-more-than-thirty-two-characters", AutoMigrate: true, SeedData: true}
 	db, err := config.OpenDatabase(configuration)
@@ -26,7 +27,7 @@ func newResurveyFixture(t *testing.T) (*CoverageGapService, *TransectPlanService
 	audit := NewAuditService(support)
 	service := NewCoverageGapService(repository.NewCoverageGapRepository(db), repository.NewSurveyAreaRepository(db), repository.NewSonarRunRepository(db), repository.NewTransectPlanRepository(db), audit)
 	plans := NewTransectPlanService(repository.NewTransectPlanRepository(db), repository.NewSurveyAreaRepository(db), audit)
-	return service, plans
+	return service, plans, db
 }
 
 func reviewedGap(t *testing.T, service *CoverageGapService, actor Actor) model.CoverageGap {
@@ -52,7 +53,7 @@ func appErrorCode(t *testing.T, err error) string {
 }
 
 func TestGenerateResurveyPlanFromReviewedGap(t *testing.T) {
-	service, plans := newResurveyFixture(t)
+	service, plans, _ := newResurveyFixture(t)
 	actor := Actor{RequestID: "req-resurvey", UserID: 4, Username: "reviewer", Role: constants.RoleReviewer}
 	gap := reviewedGap(t, service, actor)
 
@@ -75,8 +76,11 @@ func TestGenerateResurveyPlanFromReviewedGap(t *testing.T) {
 	if string(plan.LineGeoJSON) != string(gap.RecommendedLineGeoJSON) {
 		t.Fatal("resurvey plan must contain only the recommended lines")
 	}
-	if plan.SourceGap == nil || plan.SourceGap.Version != gap.Version {
-		t.Fatal("source gap version should be preloaded for provenance display")
+	if plan.SourceGapVersion == nil || *plan.SourceGapVersion != gap.Version {
+		t.Fatalf("frozen gap version = %+v, want %d", plan.SourceGapVersion, gap.Version)
+	}
+	if plan.SourceGapState != gap.GapState {
+		t.Fatalf("frozen gap state = %s, want %s", plan.SourceGapState, gap.GapState)
 	}
 	if plan.PlannedHeading != 90 {
 		t.Fatalf("heading = %.1f, want 90 for east-west recommendation", plan.PlannedHeading)
@@ -91,8 +95,44 @@ func TestGenerateResurveyPlanFromReviewedGap(t *testing.T) {
 	}
 }
 
+func TestResurveyPlanFreezesSourceSnapshot(t *testing.T) {
+	service, plans, _ := newResurveyFixture(t)
+	actor := Actor{RequestID: "req-freeze", UserID: 4, Username: "reviewer", Role: constants.RoleReviewer}
+	gap := reviewedGap(t, service, actor)
+
+	plan, err := service.GenerateResurveyPlan(gap.ID, dto.GenerateResurveyPlanRequest{SurveyAreaID: gap.SurveyAreaID}, actor)
+	if err != nil {
+		t.Fatalf("generate resurvey plan: %v", err)
+	}
+	// 缺口继续复核迁移：reviewed -> accepted，快照版本与状态随之变化。
+	moved, err := service.Transition(gap.ID, dto.GapTransitionRequest{TargetState: string(constants.GapAccepted), ExpectedVersion: gap.Version, ReviewNote: "接受补测建议的复核记录"}, actor)
+	if err != nil {
+		t.Fatalf("transition gap after generation: %v", err)
+	}
+	if moved.Version == gap.Version || moved.GapState == gap.GapState {
+		t.Fatal("gap transition should advance version and state")
+	}
+
+	reloaded, err := plans.Get(plan.ID)
+	if err != nil {
+		t.Fatalf("reload resurvey plan: %v", err)
+	}
+	if reloaded.SourceGapVersion == nil || *reloaded.SourceGapVersion != gap.Version {
+		t.Fatalf("frozen gap version drifted to %+v, want %d", reloaded.SourceGapVersion, gap.Version)
+	}
+	if reloaded.SourceGapState != gap.GapState {
+		t.Fatalf("frozen gap state drifted to %s, want %s", reloaded.SourceGapState, gap.GapState)
+	}
+	if reloaded.SourceInputHash != gap.InputHash {
+		t.Fatal("frozen input hash must not change")
+	}
+	if reloaded.SourceGap == nil || reloaded.SourceGap.Version != moved.Version {
+		t.Fatal("live association should still track the current snapshot for reference")
+	}
+}
+
 func TestGenerateResurveyPlanGuards(t *testing.T) {
-	service, _ := newResurveyFixture(t)
+	service, _, _ := newResurveyFixture(t)
 	actor := Actor{RequestID: "req-guard", UserID: 4, Username: "reviewer", Role: constants.RoleReviewer}
 	gap := reviewedGap(t, service, actor)
 
@@ -108,7 +148,7 @@ func TestGenerateResurveyPlanGuards(t *testing.T) {
 }
 
 func TestGenerateResurveyPlanRequiresReviewAndLines(t *testing.T) {
-	service, _ := newResurveyFixture(t)
+	service, _, _ := newResurveyFixture(t)
 	actor := Actor{RequestID: "req-state", UserID: 4, Username: "reviewer", Role: constants.RoleReviewer}
 	result, err := service.Detect(dto.DetectCoverageRequest{SurveyAreaID: 1, SourceRunIDs: []uint{1}, AlgorithmVersion: "grid-cover-v1.0.0", ResolutionM: 20}, "resurvey-state-idempotency", actor)
 	if err != nil {
@@ -124,5 +164,41 @@ func TestGenerateResurveyPlanRequiresReviewAndLines(t *testing.T) {
 	}
 	if _, err := service.GenerateResurveyPlan(degenerate.ID, dto.GenerateResurveyPlanRequest{SurveyAreaID: 1}, actor); appErrorCode(t, err) != "RECOMMENDED_LINES_EMPTY" {
 		t.Fatalf("empty recommended lines should be rejected, got %v", err)
+	}
+}
+
+func TestGenerateResurveyPlanAuditFailureRollsBack(t *testing.T) {
+	service, _, db := newResurveyFixture(t)
+	actor := Actor{RequestID: "req-audit-failure", UserID: 4, Username: "reviewer", Role: constants.RoleReviewer}
+	gap := reviewedGap(t, service, actor)
+
+	// 模拟审计写入失败：审计表不可用，规划与审计必须一起回滚。
+	if err := db.Exec("DROP TABLE audit_events").Error; err != nil {
+		t.Fatalf("drop audit table: %v", err)
+	}
+	if _, err := service.GenerateResurveyPlan(gap.ID, dto.GenerateResurveyPlanRequest{SurveyAreaID: gap.SurveyAreaID}, actor); err == nil {
+		t.Fatal("audit failure must abort resurvey plan generation")
+	}
+	if _, err := service.plans.BySourceGap(gap.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("rolled-back plan must not remain, lookup err = %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.TransectPlan{}).Where("plan_source = ?", constants.PlanSourceResurvey).Count(&count).Error; err != nil {
+		t.Fatalf("count resurvey plans: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("found %d leftover resurvey plans after rollback", count)
+	}
+
+	// 恢复审计能力后重试不得被判成重复提交。
+	if err := db.AutoMigrate(&model.AuditEvent{}); err != nil {
+		t.Fatalf("restore audit table: %v", err)
+	}
+	plan, err := service.GenerateResurveyPlan(gap.ID, dto.GenerateResurveyPlanRequest{SurveyAreaID: gap.SurveyAreaID}, actor)
+	if err != nil {
+		t.Fatalf("retry after recovery should succeed, got %v", err)
+	}
+	if plan.SourceGapID == nil || *plan.SourceGapID != gap.ID {
+		t.Fatal("recovered generation must keep the source gap link")
 	}
 }

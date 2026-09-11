@@ -14,6 +14,9 @@ type SupportRepository struct{ db *gorm.DB }
 
 func NewSupportRepository(db *gorm.DB) *SupportRepository { return &SupportRepository{db: db} }
 
+// WithTx 返回绑定到给定事务的仓储，用于审计与业务写入同生共死。
+func (r *SupportRepository) WithTx(tx *gorm.DB) *SupportRepository { return &SupportRepository{db: tx} }
+
 func (r *SupportRepository) UserByUsername(username string) (model.User, error) {
 	var user model.User
 	if err := r.db.Where("username = ? AND active = ?", username, true).First(&user).Error; err != nil {
